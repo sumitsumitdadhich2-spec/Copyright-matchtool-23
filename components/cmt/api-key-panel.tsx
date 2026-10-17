@@ -22,6 +22,15 @@ interface KeySlot {
   storage?: { fileCount: number; totalMB: string } | null
 }
 
+interface FreePoolInfo {
+  enabled: boolean
+  sourceUrl: string
+  workingCount: number
+  testedCount: number
+  lastRefreshTime: number
+  refreshing: boolean
+}
+
 interface SettingsResponse {
   keys: KeySlot[]
   maxKeys: number
@@ -30,6 +39,7 @@ interface SettingsResponse {
   proxy?: {
     enabled: boolean
     urls: string[]
+    freePool?: FreePoolInfo
   }
 }
 
@@ -63,15 +73,24 @@ export function ApiKeyPanel() {
   const [proxySaved, setProxySaved] = useState(false)
   const [proxyTesting, setProxyTesting] = useState(false)
   const [proxyTestResult, setProxyTestResult] = useState<{ ok: boolean; ip?: string; latencyMs?: number; error?: string } | null>(null)
+  const [freePoolEnabled, setFreePoolEnabled] = useState<boolean | null>(null)
+  const [freePoolSourceUrl, setFreePoolSourceUrl] = useState<string | null>(null)
+  const [refreshingPool, setRefreshingPool] = useState(false)
 
   const activeProxyEnabled = proxyEnabled ?? data?.proxy?.enabled ?? false
   const activeProxyUrls = proxyUrlsText ?? (data?.proxy?.urls || []).join('\n')
+  const activeFreePoolEnabled = freePoolEnabled ?? data?.proxy?.freePool?.enabled ?? false
+  const activeFreePoolSource =
+    freePoolSourceUrl ??
+    data?.proxy?.freePool?.sourceUrl ??
+    'https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt'
 
-  async function saveProxy(overrideEnabled?: boolean) {
+  async function saveProxy(overrideEnabled?: boolean, overrideFreePoolEnabled?: boolean) {
     setProxySaving(true)
     setProxySaved(false)
     setError(null)
     const isEnabled = typeof overrideEnabled === 'boolean' ? overrideEnabled : activeProxyEnabled
+    const isFreeEnabled = typeof overrideFreePoolEnabled === 'boolean' ? overrideFreePoolEnabled : activeFreePoolEnabled
     const urls = activeProxyUrls
       .split('\n')
       .map((s) => s.trim())
@@ -85,6 +104,10 @@ export function ApiKeyPanel() {
           proxy: {
             enabled: isEnabled,
             urls,
+            freePool: {
+              enabled: isFreeEnabled,
+              sourceUrl: activeFreePoolSource.trim(),
+            },
           },
         }),
       })
@@ -100,6 +123,38 @@ export function ApiKeyPanel() {
       setError('Network error saving proxy settings')
     } finally {
       setProxySaving(false)
+    }
+  }
+
+  async function refreshFreePool() {
+    setRefreshingPool(true)
+    setError(null)
+    try {
+      const res = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshFreePool: true }),
+      })
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}))
+        setError(j.error || 'Failed to refresh free proxy pool')
+        return
+      }
+      void mutate()
+    } catch {
+      setError('Failed to refresh free proxy pool')
+    } finally {
+      setRefreshingPool(false)
+    }
+  }
+
+  function formatRefreshTime(ts?: number): string {
+    if (!ts || ts <= 0) return 'Never'
+    try {
+      const d = new Date(ts)
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+    } catch {
+      return 'Never'
     }
   }
 
@@ -606,6 +661,112 @@ export function ApiKeyPanel() {
               {proxySaving ? 'Saving...' : proxySaved ? 'Saved ✓' : 'Save Proxy'}
             </button>
           </div>
+        </div>
+
+        {/* ---------- Free Proxy Pool Sub-Section ---------- */}
+        <div className="mt-4 pt-3 border-t border-border/70 space-y-2.5">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold text-foreground">Use Free Proxy Pool</span>
+                <span
+                  className={`rounded-full px-2 py-0.5 text-[9px] font-medium font-mono ${
+                    activeFreePoolEnabled
+                      ? 'bg-success/15 text-success border border-success/30'
+                      : 'bg-muted text-muted-foreground'
+                  }`}
+                >
+                  {activeFreePoolEnabled ? 'AUTO ON' : 'OFF'}
+                </span>
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                Automatically fetches & validates free HTTP proxies for lightweight Gemini API requests. Uploads stay direct.
+              </p>
+            </div>
+            {/* Free Pool ON/OFF Switch */}
+            <button
+              type="button"
+              onClick={() => {
+                const next = !activeFreePoolEnabled
+                setFreePoolEnabled(next)
+                void saveProxy(undefined, next)
+              }}
+              disabled={proxySaving}
+              className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 ${
+                activeFreePoolEnabled ? 'bg-success' : 'bg-muted'
+              }`}
+              role="switch"
+              aria-checked={activeFreePoolEnabled}
+              title={activeFreePoolEnabled ? 'Disable Free Proxy Pool' : 'Enable Free Proxy Pool'}
+            >
+              <span
+                aria-hidden="true"
+                className={`pointer-events-none inline-block size-4 transform rounded-full bg-background shadow ring-0 transition duration-200 ease-in-out ${
+                  activeFreePoolEnabled ? 'translate-x-4' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
+
+          {activeFreePoolEnabled && (
+            <div className="space-y-2 rounded-md bg-background/50 border border-border/60 p-2.5">
+              <div>
+                <label className="block text-[11px] font-medium text-muted-foreground mb-1">
+                  Proxy List Source URL (GitHub raw text, ip:port per line):
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={activeFreePoolSource}
+                    onChange={(e) => setFreePoolSourceUrl(e.target.value)}
+                    placeholder="https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt"
+                    className="min-w-0 flex-1 rounded border border-input bg-background px-2.5 py-1.5 font-mono text-[11px] outline-none focus:ring-1 focus:ring-ring"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => saveProxy()}
+                    disabled={proxySaving}
+                    className="rounded bg-primary px-2.5 py-1 text-[11px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40"
+                  >
+                    Save URL
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-xs">
+                <span className="font-mono text-[11px] text-muted-foreground">
+                  Free pool:{' '}
+                  <strong className="text-foreground font-semibold">
+                    {data?.proxy?.freePool?.workingCount ?? 0}
+                  </strong>{' '}
+                  working /{' '}
+                  <strong className="text-foreground font-semibold">
+                    {data?.proxy?.freePool?.testedCount ?? 0}
+                  </strong>{' '}
+                  tested, last refresh:{' '}
+                  <strong className="text-foreground font-semibold">
+                    {formatRefreshTime(data?.proxy?.freePool?.lastRefreshTime)}
+                  </strong>
+                </span>
+
+                <button
+                  type="button"
+                  onClick={() => refreshFreePool()}
+                  disabled={refreshingPool || data?.proxy?.freePool?.refreshing}
+                  className="inline-flex items-center gap-1.5 rounded border border-border bg-secondary px-2.5 py-1 text-[11px] font-medium hover:bg-secondary/80 disabled:opacity-50"
+                  title="Test candidates and refresh working pool now"
+                >
+                  <RefreshCw
+                    className={`size-3 text-primary ${
+                      refreshingPool || data?.proxy?.freePool?.refreshing ? 'animate-spin' : ''
+                    }`}
+                    aria-hidden
+                  />
+                  {refreshingPool || data?.proxy?.freePool?.refreshing ? 'Refreshing...' : 'Refresh Pool'}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">

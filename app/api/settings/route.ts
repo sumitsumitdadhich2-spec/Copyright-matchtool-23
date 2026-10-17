@@ -20,7 +20,13 @@ import { getSession } from '@/lib/users'
 import { MODEL_POOL } from '@/lib/models'
 import { poolSnapshot } from '@/lib/ffmpeg-pool'
 import { getKeyStorageInfo, deleteAllFilesOnKey } from '@/lib/gemini'
-import { getProxyConfig, setProxyConfig, testProxyConnection } from '@/lib/proxy-agent'
+import {
+  getProxyConfig,
+  setProxyConfig,
+  testProxyConnection,
+  getFreePoolStatus,
+  refreshFreeProxyPool,
+} from '@/lib/proxy-agent'
 
 export const runtime = 'nodejs'
 
@@ -101,6 +107,7 @@ export async function GET() {
     proxy: {
       enabled: proxy.enabled,
       urls: proxy.urls,
+      freePool: getFreePoolStatus(),
     },
     // Verifier toggle: true (default) | false
     verifierEnabled,
@@ -125,15 +132,15 @@ export async function GET() {
   })
 }
 
-/** PUT { minuteFinder?: 'gemini' | 'twelvelabs' | 'off', verifierEnabled?: boolean, autoMode?: boolean, proxy?: { enabled?: boolean, urls?: string[] } } — persist settings. */
+/** PUT { minuteFinder?: 'gemini' | 'twelvelabs' | 'off', verifierEnabled?: boolean, autoMode?: boolean, proxy?: { enabled?: boolean, urls?: string[], freePool?: { enabled?: boolean, sourceUrl?: string } } } — persist settings. */
 export async function PUT(req: Request) {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>
   if (body.proxy && typeof body.proxy === 'object') {
-    const p = body.proxy as { enabled?: boolean; urls?: string[] }
+    const p = body.proxy as { enabled?: boolean; urls?: string[]; freePool?: { enabled?: boolean; sourceUrl?: string } }
     const updated = await setProxyConfig(p)
-    return NextResponse.json({ ok: true, proxy: updated })
+    return NextResponse.json({ ok: true, proxy: { ...updated, freePool: getFreePoolStatus() } })
   }
   if (body.autoMode !== undefined) {
     const enabled = Boolean(body.autoMode)
@@ -169,11 +176,17 @@ export async function POST(req: Request) {
     return NextResponse.json(result)
   }
 
-  // ----- Proxy configuration: { proxy: { enabled?: boolean, urls?: string[] } } -----
+  // ----- Refresh free proxy pool: { refreshFreePool: true } -----
+  if (body.refreshFreePool === true) {
+    const status = await refreshFreeProxyPool(true)
+    return NextResponse.json({ ok: true, freePool: status })
+  }
+
+  // ----- Proxy configuration: { proxy: { enabled?: boolean, urls?: string[], freePool?: { enabled?: boolean, sourceUrl?: string } } } -----
   if (body.proxy && typeof body.proxy === 'object') {
-    const p = body.proxy as { enabled?: boolean; urls?: string[] }
+    const p = body.proxy as { enabled?: boolean; urls?: string[]; freePool?: { enabled?: boolean; sourceUrl?: string } }
     const updated = await setProxyConfig(p)
-    return NextResponse.json({ ok: true, proxy: updated })
+    return NextResponse.json({ ok: true, proxy: { ...updated, freePool: getFreePoolStatus() } })
   }
 
   // ----- Verifier toggle -----
