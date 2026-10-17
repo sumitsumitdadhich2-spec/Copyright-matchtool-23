@@ -1,0 +1,6 @@
+{
+  "summary": "Implementation plan for the MatchTool Chunk Scan Orchestrator featuring strict 1-chunk-per-key concurrency, key slot allocation (Slots 2-13, 15, 16 with Slot 1 reserved and Slot 14 skipped), prioritized fallback chain (3.6 Primary -> 3.7 Secondary on 503 -> 3.8 Tertiary, 3.5 Canary), segregated error tracking (503 vs 429 vs >60s timeouts), and a full live matrix monitoring UI on the scan screen.",
+  "updatedAt": "2026-10-14T13:33:40.061404734Z",
+  "requestFeedback": true,
+  "userFacing": true
+}
