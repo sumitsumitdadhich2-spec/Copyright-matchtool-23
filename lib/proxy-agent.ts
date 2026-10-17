@@ -1,7 +1,39 @@
 import 'server-only'
 
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { ProxyAgent, fetch as undiciFetch } from 'undici'
 import { readJSONRecord, writeJSONRecord } from './json-record'
+
+export type ProxyRouteVia = 'proxy' | 'direct' | 'fallback'
+
+export interface ProxyRouteInfo {
+  via: ProxyRouteVia
+  proxyMs: number
+}
+
+const routeStorage = new AsyncLocalStorage<{ info?: ProxyRouteInfo }>()
+let lastRouteInfo: ProxyRouteInfo = { via: 'direct', proxyMs: 0 }
+
+function recordRoute(via: ProxyRouteVia, proxyMs: number) {
+  const info: ProxyRouteInfo = { via, proxyMs }
+  lastRouteInfo = info
+  const store = routeStorage.getStore()
+  if (store) store.info = info
+}
+
+export function getLatestRouteInfo(): ProxyRouteInfo {
+  const store = routeStorage.getStore()
+  return store?.info || lastRouteInfo
+}
+
+export async function runWithRouteTracking<T>(fn: () => Promise<T>): Promise<{ result: T; info: ProxyRouteInfo }> {
+  const store: { info?: ProxyRouteInfo } = {}
+  const result = await routeStorage.run(store, fn)
+  return {
+    result,
+    info: store.info || lastRouteInfo,
+  }
+}
 
 export interface ProxyConfig {
   enabled: boolean
@@ -175,14 +207,21 @@ export async function geminiFetch(input: string | URL | Request, init?: RequestI
   }
 
   if (!cachedConfig.enabled || cachedConfig.urls.length === 0) {
-    return fetch(input, init)
+    const t0 = Date.now()
+    const res = await fetch(input, init)
+    recordRoute('direct', Date.now() - t0)
+    return res
   }
 
   const proxyUri = getNextProxyUrl()
   if (!proxyUri) {
-    return fetch(input, init)
+    const t0 = Date.now()
+    const res = await fetch(input, init)
+    recordRoute('direct', Date.now() - t0)
+    return res
   }
 
+  const t0 = Date.now()
   try {
     const agent = getOrCreateProxyAgent(proxyUri)
     const targetUrl =
@@ -199,6 +238,7 @@ export async function geminiFetch(input: string | URL | Request, init?: RequestI
       dispatcher: agent,
     })) as unknown as Response
 
+    recordRoute('proxy', Date.now() - t0)
     return res
   } catch (err: unknown) {
     if (init?.signal?.aborted || (err as { name?: string })?.name === 'AbortError') {
@@ -208,7 +248,10 @@ export async function geminiFetch(input: string | URL | Request, init?: RequestI
     const { isFailure, code } = isProxyConnectFailure(err, init)
     if (isFailure) {
       console.warn(`[Gemini Proxy] Connect failed (${code}) — fallback to direct connection`)
-      return fetch(input, init)
+      const fallbackT0 = Date.now()
+      const res = await fetch(input, init)
+      recordRoute('fallback', Date.now() - fallbackT0)
+      return res
     }
 
     throw err

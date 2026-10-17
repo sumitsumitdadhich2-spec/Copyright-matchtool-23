@@ -3,6 +3,7 @@ import { GoogleGenAI } from '@google/genai'
 import { getSession } from '@/lib/users'
 import { getChatKeyN, getAllChatApiKeys } from '@/lib/chat-keys'
 import { incrementModelUsage } from '@/lib/store'
+import { geminiFetch, getLatestRouteInfo } from '@/lib/proxy-agent'
 import { runFfmpeg } from '@/lib/ffmpeg-pool'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -231,6 +232,7 @@ export async function POST(req: NextRequest) {
         headers: {
           'User-Agent': 'aistudio-build',
         },
+        fetch: geminiFetch,
       },
     })
 
@@ -388,6 +390,7 @@ export async function POST(req: NextRequest) {
 
     const requestRespondedAt = Date.now()
     const responseText = response.text || ''
+    const routeInfo = getLatestRouteInfo()
 
     return NextResponse.json({
       reply: responseText,
@@ -398,6 +401,8 @@ export async function POST(req: NextRequest) {
       sentAt: requestSentAt,
       respondedAt: requestRespondedAt,
       durationMs: requestRespondedAt - requestSentAt,
+      via: routeInfo.via,
+      proxyMs: routeInfo.proxyMs,
       fps: tempInputPath ? fps : undefined,
       timelapse: tempInputPath ? timelapse : undefined,
       hadVideo: Boolean(tempInputPath),
@@ -413,6 +418,7 @@ export async function POST(req: NextRequest) {
     const is429 = lower.includes('429') || lower.includes('quota') || lower.includes('rate limit') || lower.includes('resource_exhausted')
     const now = Date.now()
     const finalSentAt = requestSentAt ?? now
+    const routeInfo = getLatestRouteInfo()
     return NextResponse.json(
       {
         error: errorMsg,
@@ -424,6 +430,8 @@ export async function POST(req: NextRequest) {
         sentAt: finalSentAt,
         respondedAt: now,
         durationMs: Math.max(0, now - finalSentAt),
+        via: routeInfo.via,
+        proxyMs: routeInfo.proxyMs,
       },
       { status: 400 },
     )

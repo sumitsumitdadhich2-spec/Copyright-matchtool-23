@@ -24,6 +24,7 @@ import {
   Columns,
   Maximize2,
   Minimize2,
+  Globe,
 } from 'lucide-react'
 import { fetcher } from '@/lib/format'
 
@@ -46,6 +47,8 @@ export interface ChatMessage {
   sentAt?: number
   respondedAt?: number
   durationMs?: number
+  via?: 'proxy' | 'direct' | 'fallback'
+  proxyMs?: number
   videoInfo?: {
     name: string
     sizeStr: string
@@ -122,6 +125,35 @@ interface GeminiChatDialogProps {
 
 export function GeminiChatDialog({ open, onClose }: GeminiChatDialogProps) {
   const { data: keysData, mutate: refreshKeys } = useSWR<KeysResponse>('/api/chat/keys', fetcher)
+  const { data: settingsData, mutate: mutateSettings } = useSWR<{ proxy?: { enabled: boolean; urls: string[] } }>(
+    open ? '/api/settings' : null,
+    fetcher,
+  )
+  const [togglingProxy, setTogglingProxy] = useState<boolean>(false)
+
+  async function handleToggleProxy() {
+    const currentEnabled = Boolean(settingsData?.proxy?.enabled)
+    const nextEnabled = !currentEnabled
+    const existingUrls = settingsData?.proxy?.urls || []
+    setTogglingProxy(true)
+    try {
+      await fetch('/api/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          proxy: {
+            enabled: nextEnabled,
+            urls: existingUrls,
+          },
+        }),
+      })
+      await mutateSettings()
+    } catch (err) {
+      console.error('Failed to toggle proxy:', err)
+    } finally {
+      setTogglingProxy(false)
+    }
+  }
 
   // Multi-pane state: start with 2 side-by-side comparison panes by default
   const [panes, setPanes] = useState<ChatPaneState[]>([
@@ -373,6 +405,8 @@ export function GeminiChatDialog({ open, onClose }: GeminiChatDialogProps) {
           sentAt,
           respondedAt,
           durationMs,
+          via: data.via,
+          proxyMs: data.proxyMs,
           isError: true,
           is503,
           errorDetail: errorMsg,
@@ -391,6 +425,8 @@ export function GeminiChatDialog({ open, onClose }: GeminiChatDialogProps) {
           sentAt,
           respondedAt,
           durationMs,
+          via: data.via,
+          proxyMs: data.proxyMs,
           modelUsed: data.model || pane.selectedModel,
           keyUsed: data.keyUsed || (pane.keySelection === 'auto' ? 'Key 1' : `Key ${pane.keySelection}`),
         }
@@ -498,6 +534,30 @@ export function GeminiChatDialog({ open, onClose }: GeminiChatDialogProps) {
               <Plus className="size-3.5" />
               <span>+ Add Side-by-Side Chat</span>
             </button>
+
+            {/* Proxy ON/OFF Toggle (synced with Settings) */}
+            <div className="flex items-center gap-1.5 rounded-lg border border-zinc-800 bg-zinc-900 px-2.5 py-1 text-xs">
+              <Globe className={`size-3.5 ${Boolean(settingsData?.proxy?.enabled) ? 'text-emerald-400' : 'text-zinc-500'}`} />
+              <span className="text-[11px] font-medium text-zinc-300">Proxy</span>
+              <button
+                type="button"
+                onClick={handleToggleProxy}
+                disabled={togglingProxy}
+                role="switch"
+                aria-checked={Boolean(settingsData?.proxy?.enabled)}
+                title={Boolean(settingsData?.proxy?.enabled) ? 'Proxy ON — click to turn OFF' : 'Proxy OFF — click to turn ON'}
+                className={`relative inline-flex h-4 w-8 shrink-0 cursor-pointer rounded-full border border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                  Boolean(settingsData?.proxy?.enabled) ? 'bg-emerald-500' : 'bg-zinc-700'
+                }`}
+              >
+                <span
+                  aria-hidden="true"
+                  className={`pointer-events-none inline-block size-3 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                    Boolean(settingsData?.proxy?.enabled) ? 'translate-x-4' : 'translate-x-0.5'
+                  }`}
+                />
+              </button>
+            </div>
 
             {/* Sync from Settings Button */}
             <button
@@ -826,6 +886,21 @@ function ChatPaneComponent({
                       <span>
                         Replied/Failed: <strong>{formatClockTime(msg.respondedAt)}</strong>
                       </span>
+                      {msg.via === 'proxy' && (
+                        <span className="rounded bg-emerald-500/20 border border-emerald-500/40 px-1.5 py-0.5 font-bold text-emerald-300">
+                          via Proxy
+                        </span>
+                      )}
+                      {msg.via === 'fallback' && (
+                        <span className="rounded bg-amber-500/25 border border-amber-500/50 px-1.5 py-0.5 font-bold text-amber-300">
+                          Proxy failed ➔ Direct
+                        </span>
+                      )}
+                      {msg.via === 'direct' && (
+                        <span className="rounded bg-zinc-800 border border-zinc-700 px-1.5 py-0.5 font-medium text-zinc-400">
+                          Direct
+                        </span>
+                      )}
                       <span className="rounded bg-amber-500/20 border border-amber-500/40 px-1.5 py-0.5 font-bold text-amber-300 ml-auto">
                         ⏱️ Time Lapse: {formatDuration(msg.durationMs)}
                       </span>
@@ -908,6 +983,21 @@ function ChatPaneComponent({
                       <span className="flex items-center gap-1 text-zinc-300">
                         Reply: <strong>{formatClockTime(msg.respondedAt)}</strong>
                       </span>
+                      {msg.via === 'proxy' && (
+                        <span className="rounded bg-emerald-500/20 border border-emerald-500/40 px-1.5 py-0.5 font-bold text-emerald-300">
+                          via Proxy
+                        </span>
+                      )}
+                      {msg.via === 'fallback' && (
+                        <span className="rounded bg-amber-500/25 border border-amber-500/50 px-1.5 py-0.5 font-bold text-amber-300">
+                          Proxy failed ➔ Direct
+                        </span>
+                      )}
+                      {msg.via === 'direct' && (
+                        <span className="rounded bg-zinc-800 border border-zinc-700 px-1.5 py-0.5 font-medium text-zinc-400">
+                          Direct
+                        </span>
+                      )}
                       <span className="rounded bg-amber-500/15 border border-amber-500/30 px-1.5 py-0.5 font-bold text-amber-300 ml-auto">
                         ⏱️ Time Lapse: {formatDuration(msg.durationMs)}
                       </span>
